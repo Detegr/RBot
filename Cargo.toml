@@ -1,0 +1,5 @@
+[package]
+
+name = "RBot"
+version = "0.0.1"
+authors = ["Antti Keränen <detegr@gmail.com>"]
