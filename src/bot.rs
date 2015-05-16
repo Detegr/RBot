@@ -9,6 +9,8 @@ use std::sync::atomic::Ordering;
 use std::thread::JoinGuard;
 use std::net::Shutdown;
 
+const CHANNELS: &'static [&'static str] = &["#testchannel"];
+
 pub fn start(server: &str, port: u16) -> Result<(JoinGuard<()>,JoinGuard<()>)>
 {
     let (tx, rx) = channel();
@@ -20,9 +22,19 @@ pub fn start(server: &str, port: u16) -> Result<(JoinGuard<()>,JoinGuard<()>)>
                 let mut parsed = parser::parse_message(line.as_ref()).unwrap();
                 println!("{}", line);
                 println!("{:?}", parsed);
-                if parsed.command == Command::Named("PING") {
-                    parsed.command = Command::Named("PONG");
-                    tx.send(format!("{}\r\n", parsed)).unwrap();
+                match parsed.command {
+                    Command::Named("PING") => {
+                        parsed.command = Command::Named("PONG");
+                        tx.send(format!("{}\r\n", parsed)).unwrap();
+                    },
+                    Command::Numeric(376) => { // End of MOTD
+                        for channel in CHANNELS {
+                            tx.send(format!("JOIN {}\r\n", channel)).unwrap();
+                        }
+                    },
+                    Command::Named("JOIN") => {
+                    },
+                    _ => {}
                 }
             }
         }
