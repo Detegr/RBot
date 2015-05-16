@@ -1,5 +1,5 @@
 use std::str::from_utf8;
-use nom::{space, IResult, Needed};
+use nom::space;
 use nom::IResult::*;
 use std::str::FromStr;
 use std::fmt;

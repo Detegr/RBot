@@ -1,4 +1,5 @@
 #![feature(scoped)]
+#![feature(buf_stream)]
 #[macro_use]
 
 extern crate nom;
