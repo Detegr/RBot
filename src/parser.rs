@@ -41,8 +41,7 @@ impl<'a> fmt::Display for Command<'a> {
 pub struct Message<'a> {
     pub prefix: Option<Prefix<'a>>,
     pub command: Command<'a>,
-    pub params: Vec<&'a str>,
-    pub trailing: &'a str
+    pub params: Vec<&'a str>
 }
 
 impl<'a> fmt::Display for Message<'a> {
@@ -54,10 +53,8 @@ impl<'a> fmt::Display for Message<'a> {
         };
         ret.push_str(format!("{} ", self.command).as_ref());
         for param in self.params.iter() {
+            // TODO: The output format of this is not 1:1 to the string that was parsed
             ret.push_str(format!("{} ", param).as_ref());
-        }
-        if self.trailing.len() > 0 { // Extra space added if trailing.len() == 0, but should not matter
-            ret.push_str(format!(":{}", self.trailing).as_ref());
         }
         write!(f, "{}", ret)
     }
@@ -70,19 +67,21 @@ named!(message_parser <&[u8], Message>,
         parsed_params: map_res!(take_until_and_consume!(":"), from_utf8)? ~
         parsed_trailing: eol,
         || {
-            let (params, trailing) = match parsed_params {
+            let params = match parsed_params {
                 Some(p) => {
                     let _: &str = p; // TODO: This looks stupid. How should this be done?
                     let words = p.split_whitespace();
-                    (words.collect(), parsed_trailing)
+                    // TODO: Is it possible to remove the mutable variable?
+                    let mut prms: Vec<&str> = words.collect();
+                    prms.push(parsed_trailing);
+                    prms
                 },
-                None => (parsed_trailing.split_whitespace().collect(), "")
+                None => parsed_trailing.split_whitespace().collect()
             };
             Message {
                 prefix: parsed_prefix,
                 command: parsed_command,
-                params: params,
-                trailing: trailing
+                params: params
             }
         }
     )
@@ -155,8 +154,7 @@ mod tests {
             Done(_, msg) => {
                 assert_eq!(msg.prefix, None);
                 assert_eq!(msg.command, Command::Named("NOTICE"));
-                assert_eq!(msg.params, vec!["AUTH"]);
-                assert_eq!(msg.trailing, "*** Looking up your hostname");
+                assert_eq!(msg.params, vec!["AUTH", "*** Looking up your hostname"]);
             },
             Incomplete(i) => panic!(format!("Incomplete: {:?}", i)),
             _ => panic!("Error while parsing auth message")
@@ -169,7 +167,6 @@ mod tests {
                 assert_eq!(msg.prefix, Some(Prefix::Server("port80a.se.quakenet.org")));
                 assert_eq!(msg.command, Command::Numeric(4));
                 assert_eq!(msg.params, vec!["RustBot", "port80a.se.quakenet.org", "u2.10.12.10+snircd(1.3.4a)", "dioswkgxRXInP", "biklmnopstvrDcCNuMT", "bklov"]);
-                assert_eq!(msg.trailing, "");
             },
             Incomplete(i) => panic!(format!("Incomplete: {:?}", i)),
             _ => panic!("Error while parsing a message without trailing stuff")
