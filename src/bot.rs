@@ -27,7 +27,7 @@ pub fn start(server: &str, port: u16) -> Result<(JoinGuard<()>,JoinGuard<()>)> {
                 let mut parsed = parser::parse_message(line.as_ref()).unwrap();
                 {
                     let mut clients = clientdata.lock().unwrap();
-                    for mut client in clients.iter_mut() {
+                    for mut client in &mut *clients {
                         client.write(line.as_bytes()).unwrap();
                     }
                 }
