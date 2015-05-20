@@ -4,6 +4,7 @@ version = "0.0.1"
 dependencies = [
  "ctrlc 0.0.1 (git+https://github.com/Detegr/rust-ctrlc)",
  "nom 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "unix_socket 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -12,7 +13,26 @@ version = "0.0.1"
 source = "git+https://github.com/Detegr/rust-ctrlc#a3b225c90aa0556c0e7066636e48cb5e3072541f"
 
 [[package]]
+name = "debug-builders"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "libc"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
 name = "nom"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "unix_socket"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "debug-builders 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "libc 0.1.7 (registry+https://github.com/rust-lang/crates.io-index)",
+]
 

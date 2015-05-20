@@ -9,3 +9,6 @@ nom = "*"
 
 [dependencies.ctrlc]
 git = "https://github.com/Detegr/rust-ctrlc"
+
+[dependencies.unix_socket]
+unix_socket = "0.3.2"

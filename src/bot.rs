@@ -8,16 +8,29 @@ use parser::Command;
 use std::sync::atomic::Ordering;
 use std::thread::JoinGuard;
 use std::net::Shutdown;
+use unix_socket::{UnixStream,UnixListener};
+use std::sync::{Arc,Mutex};
 
-pub fn start(server: &str, port: u16) -> Result<(JoinGuard<()>,JoinGuard<()>)>
-{
+pub fn start(server: &str, port: u16) -> Result<(JoinGuard<()>,JoinGuard<()>)> {
+
     let (tx, rx) = channel();
+
+    let clientdata = listen_to_unix_socket(server);
+
+    println!("Connecting to {}:{}", server, port);
     let stream = BufStream::new(try!(TcpStream::connect((server, port))));
     let mut wstream = try!(stream.get_ref().try_clone());
+
     let reader_thread = thread::scoped(move || {
         for full_line in stream.lines() {
             for line in full_line.unwrap().split("\r\n") {
                 let mut parsed = parser::parse_message(line.as_ref()).unwrap();
+                {
+                    let mut clients = clientdata.lock().unwrap();
+                    for mut client in clients.iter_mut() {
+                        client.write(line.as_bytes()).unwrap();
+                    }
+                }
                 println!("{}", line);
                 println!("{:?}", parsed);
                 if parsed.command == Command::Named("PING") {
@@ -39,4 +52,27 @@ pub fn start(server: &str, port: u16) -> Result<(JoinGuard<()>,JoinGuard<()>)>
         wstream.shutdown(Shutdown::Both).unwrap();
     });
     Ok((writer_thread, reader_thread))
+}
+
+fn listen_to_unix_socket(server: &str) -> Arc<Mutex<Vec<UnixStream>>> {
+    let clientdata = Arc::new(Mutex::new(vec![]));
+    let socketpath = format!("./{}", server);
+    println!("Creating status socket for '{}' to {}", server, socketpath);
+    let ret = clientdata.clone();
+    thread::spawn(move || {
+        let ulistener = match UnixListener::bind(&socketpath) {
+            Ok(ulistener) => ulistener,
+            Err(err) => panic!("Could not create UNIX socket to '{}': {}", socketpath, err)
+        };
+        for stream in ulistener.incoming() {
+            match stream {
+                Ok(client) => {
+                    let mut clients = clientdata.lock().unwrap();
+                    clients.push(client);
+                }
+                Err(err) => println!("New client failed, error: {}", err)
+            }
+        }
+    });
+    ret
 }
