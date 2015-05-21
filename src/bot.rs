@@ -10,12 +10,13 @@ use std::thread::JoinGuard;
 use std::net::Shutdown;
 use unix_socket::{UnixStream,UnixListener};
 use std::sync::{Arc,Mutex};
+use std::collections::HashMap;
 
 pub fn start(server: &str, port: u16) -> Result<(JoinGuard<()>,JoinGuard<()>)> {
 
     let (tx, rx) = channel();
-
-    let clientdata = listen_to_unix_socket(server);
+    let mut sockets = HashMap::new();
+    sockets.insert(server, listen_to_unix_socket(server));
 
     println!("Connecting to {}:{}", server, port);
     let stream = BufStream::new(try!(TcpStream::connect((server, port))));
@@ -26,7 +27,7 @@ pub fn start(server: &str, port: u16) -> Result<(JoinGuard<()>,JoinGuard<()>)> {
             for line in full_line.unwrap().split("\r\n") {
                 let mut parsed = parser::parse_message(line.as_ref()).unwrap();
                 {
-                    let mut clients = clientdata.lock().unwrap();
+                    let mut clients = sockets.get(server).unwrap().lock().unwrap();
                     for mut client in &mut *clients {
                         client.write(line.as_bytes()).unwrap();
                     }
