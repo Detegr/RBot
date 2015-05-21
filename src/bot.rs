@@ -12,8 +12,9 @@ use unix_socket::{UnixStream,UnixListener};
 use std::sync::{Arc,Mutex};
 use std::collections::HashMap;
 
-pub fn start(server: &str, port: u16) -> Result<(JoinGuard<()>,JoinGuard<()>)> {
+const CHANNELS: &'static [&'static str] = &["#testchannel"]; // TODO: Read channels (and servers) from a config file
 
+pub fn start(server: &str, port: u16) -> Result<(JoinGuard<()>,JoinGuard<()>)> {
     let (tx, rx) = channel();
     let mut sockets = HashMap::new();
     sockets.insert(server, listen_to_unix_socket(server));
@@ -34,9 +35,17 @@ pub fn start(server: &str, port: u16) -> Result<(JoinGuard<()>,JoinGuard<()>)> {
                 }
                 println!("{}", line);
                 println!("{:?}", parsed);
-                if parsed.command == Command::Named("PING") {
-                    parsed.command = Command::Named("PONG");
-                    tx.send(format!("{}\r\n", parsed)).unwrap();
+                match parsed.command {
+                    Command::Named("PING") => {
+                        parsed.command = Command::Named("PONG");
+                        tx.send(format!("{}\r\n", parsed)).unwrap();
+                    },
+                    Command::Numeric(376) => { // End of MOTD
+                        for channel in CHANNELS {
+                            tx.send(format!("JOIN {}\r\n", channel)).unwrap();
+                        }
+                    },
+                    _ => {}
                 }
             }
         }
