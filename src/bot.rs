@@ -11,13 +11,15 @@ use std::net::Shutdown;
 use unix_socket::{UnixStream,UnixListener};
 use std::sync::{Arc,Mutex};
 use std::collections::HashMap;
+use std::fs::{create_dir,remove_file};
 
+const SOCKETDIR: &'static str = "./sockets";
 const CHANNELS: &'static [&'static str] = &["#testchannel"]; // TODO: Read channels (and servers) from a config file
 
 pub fn start(server: &str, port: u16) -> Result<(JoinGuard<()>,JoinGuard<()>)> {
     let (tx, rx) = channel();
     let mut sockets = HashMap::new();
-    sockets.insert(server, listen_to_unix_socket(server));
+    sockets.insert(server.to_owned(), listen_to_unix_socket(server));
 
     println!("Connecting to {}:{}", server, port);
     let stream = BufStream::new(try!(TcpStream::connect((server, port))));
@@ -39,6 +41,18 @@ pub fn start(server: &str, port: u16) -> Result<(JoinGuard<()>,JoinGuard<()>)> {
                     Command::Named("PING") => {
                         parsed.command = Command::Named("PONG");
                         tx.send(format!("{}\r\n", parsed)).unwrap();
+                    },
+                    Command::Named("PRIVMSG") => {
+                        let destination = parsed.params[0];
+                        let key = destination.to_owned();
+                        println!("Retreiving value for '{}'", key);
+                        let socketdata = sockets.entry(key).or_insert_with(|| listen_to_unix_socket(destination));
+                        {
+                            let mut socket = socketdata.lock().unwrap();
+                            for mut client in &mut *socket {
+                                client.write(line.as_bytes()).unwrap();
+                            }
+                        }
                     },
                     Command::Numeric(376) => { // End of MOTD
                         for channel in CHANNELS {
@@ -64,10 +78,12 @@ pub fn start(server: &str, port: u16) -> Result<(JoinGuard<()>,JoinGuard<()>)> {
     Ok((writer_thread, reader_thread))
 }
 
-fn listen_to_unix_socket(server: &str) -> Arc<Mutex<Vec<UnixStream>>> {
+fn listen_to_unix_socket(socket: &str) -> Arc<Mutex<Vec<UnixStream>>> {
+    let _ = create_dir(SOCKETDIR);
     let clientdata = Arc::new(Mutex::new(vec![]));
-    let socketpath = format!("./{}", server);
-    println!("Creating status socket for '{}' to {}", server, socketpath);
+    let socketpath = format!("{}/{}", SOCKETDIR, socket);
+    let _ = remove_file(&socketpath);
+    println!("Creating status socket for '{}' to {}", socket, socketpath);
     let ret = clientdata.clone();
     thread::spawn(move || {
         let ulistener = match UnixListener::bind(&socketpath) {
