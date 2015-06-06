@@ -6,9 +6,7 @@ authors = ["Antti Keränen <detegr@gmail.com>"]
 
 [dependencies]
 nom = "*"
+unix_socket = "0.3.2"
 
 [dependencies.ctrlc]
 git = "https://github.com/Detegr/rust-ctrlc"
-
-[dependencies.unix_socket]
-unix_socket = "0.3.2"

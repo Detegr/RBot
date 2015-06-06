@@ -2,7 +2,7 @@ use std::net::{TcpStream};
 use std::io::{BufStream,BufRead,Write};
 use std::io::Result;
 use std::thread;
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{channel, Sender};
 use parser;
 use parser::Command;
 use std::sync::atomic::Ordering;
@@ -16,66 +16,80 @@ use std::fs::{create_dir,remove_file};
 const SOCKETDIR: &'static str = "./sockets";
 const CHANNELS: &'static [&'static str] = &["#testchannel"]; // TODO: Read channels (and servers) from a config file
 
-pub fn start(server: &str, port: u16) -> Result<(JoinGuard<()>,JoinGuard<()>)> {
-    let (tx, rx) = channel();
-    let mut sockets = HashMap::new();
-    sockets.insert(server.to_owned(), listen_to_unix_socket(server));
+pub struct Bot<'a> {
+    threads: Vec<JoinGuard<'a, ()>>,
+}
+impl<'a> Bot<'a> {
+    pub fn new(server: &str, port: u16) -> Result<Bot> {
+        let (tx, rx) = channel();
 
-    println!("Connecting to {}:{}", server, port);
-    let stream = BufStream::new(try!(TcpStream::connect((server, port))));
-    let mut wstream = try!(stream.get_ref().try_clone());
+        let mut sockets = HashMap::new();
+        sockets.insert(server.to_owned(), listen_to_unix_socket(server));
+        println!("Connecting to {}:{}", server, port);
 
-    let reader_thread = thread::scoped(move || {
-        for full_line in stream.lines() {
-            for line in full_line.unwrap().split("\r\n") {
-                let mut parsed = parser::parse_message(line.as_ref()).unwrap();
-                {
-                    let mut clients = sockets.get(server).unwrap().lock().unwrap();
-                    for mut client in &mut *clients {
-                        client.write(line.as_bytes()).unwrap();
-                    }
-                }
-                println!("{}", line);
-                println!("{:?}", parsed);
-                match parsed.command {
-                    Command::Named("PING") => {
-                        parsed.command = Command::Named("PONG");
-                        tx.send(format!("{}\r\n", parsed)).unwrap();
-                    },
-                    Command::Named("PRIVMSG") => {
-                        let destination = parsed.params[0];
-                        let key = destination.to_owned();
-                        println!("Retreiving value for '{}'", key);
-                        let socketdata = sockets.entry(key).or_insert_with(|| listen_to_unix_socket(destination));
-                        {
-                            let mut socket = socketdata.lock().unwrap();
-                            for mut client in &mut *socket {
-                                client.write(line.as_bytes()).unwrap();
-                            }
-                        }
-                    },
-                    Command::Numeric(376) => { // End of MOTD
-                        for channel in CHANNELS {
-                            tx.send(format!("JOIN {}\r\n", channel)).unwrap();
-                        }
-                    },
-                    _ => {}
+        let stream = BufStream::new(try!(TcpStream::connect((server, port))));
+        let mut wstream = try!(stream.get_ref().try_clone());
+
+        let reader_thread = thread::scoped(move || {
+            for full_line in stream.lines() {
+                for line in full_line.unwrap().split("\r\n") {
+                    handle_line(server, &mut sockets, line, &tx);
                 }
             }
+        });
+
+        let writer_thread = thread::scoped(move || {
+            wstream.write(b"NICK RustBot\r\n").unwrap();
+            wstream.write(b"USER RustBot 0 * :RustBot\r\n").unwrap();
+            while super::RUNNING.load(Ordering::SeqCst) {
+                match rx.try_recv() {
+                    Ok(line) => {wstream.write(line.as_bytes()).unwrap();}
+                    Err(_) => {thread::sleep_ms(500);}
+                };
+            }
+            wstream.shutdown(Shutdown::Both).unwrap();
+        });
+
+        Ok(Bot {
+            threads: vec![reader_thread, writer_thread]
+        })
+    }
+}
+
+fn handle_line(server: &str, sockets: &mut HashMap<String, Arc<Mutex<Vec<UnixStream>>>>, line: &str, tx: &Sender<String>) {
+    let mut parsed = parser::parse_message(line.as_ref()).unwrap();
+    {
+        let mut clients = sockets.get(server).unwrap().lock().unwrap();
+        for mut client in &mut *clients {
+            client.write(line.as_bytes()).unwrap();
         }
-    });
-    let writer_thread = thread::scoped(move || {
-        wstream.write(b"NICK RustBot\r\n").unwrap();
-        wstream.write(b"USER RustBot 0 * :RustBot\r\n").unwrap();
-        while super::RUNNING.load(Ordering::SeqCst) {
-            match rx.try_recv() {
-                Ok(line) => {wstream.write(line.as_bytes()).unwrap();}
-                Err(_) => {thread::sleep_ms(500);}
-            };
-        }
-        wstream.shutdown(Shutdown::Both).unwrap();
-    });
-    Ok((writer_thread, reader_thread))
+    }
+    println!("{}", line);
+    println!("{:?}", parsed);
+    match parsed.command {
+        Command::Named("PING") => {
+            parsed.command = Command::Named("PONG");
+            tx.send(format!("{}\r\n", parsed)).unwrap();
+        },
+        Command::Named("PRIVMSG") => {
+            let destination = parsed.params[0];
+            let key = destination.to_owned();
+            println!("Retreiving value for '{}'", key);
+            let socketdata = sockets.entry(key).or_insert_with(|| listen_to_unix_socket(destination));
+            {
+                let mut socket = socketdata.lock().unwrap();
+                for mut client in &mut *socket {
+                    client.write(line.as_bytes()).unwrap();
+                }
+            }
+        },
+        Command::Numeric(376) => { // End of MOTD
+            for channel in CHANNELS {
+                tx.send(format!("JOIN {}\r\n", channel)).unwrap();
+            }
+        },
+        _ => {}
+    }
 }
 
 fn listen_to_unix_socket(socket: &str) -> Arc<Mutex<Vec<UnixStream>>> {
