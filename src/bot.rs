@@ -1,12 +1,13 @@
 use std::net::{TcpStream};
-use std::io::{BufStream,BufRead,Write};
+use bufstream::BufStream;
+use std::io::{BufRead,Write};
 use std::io::Result;
 use std::thread;
 use std::sync::mpsc::{channel, Sender};
 use parser;
 use parser::Command;
 use std::sync::atomic::Ordering;
-use std::thread::JoinGuard;
+use std::thread::JoinHandle;
 use std::net::Shutdown;
 use unix_socket::{UnixStream,UnixListener};
 use std::sync::{Arc,Mutex};
@@ -16,10 +17,10 @@ use std::fs::{create_dir,remove_file};
 const SOCKETDIR: &'static str = "./sockets";
 const CHANNELS: &'static [&'static str] = &["#testchannel"]; // TODO: Read channels (and servers) from a config file
 
-pub struct Bot<'a> {
-    threads: Vec<JoinGuard<'a, ()>>,
+pub struct Bot {
+    threads: (JoinHandle<()>, JoinHandle<()>),
 }
-impl<'a> Bot<'a> {
+impl Bot {
     pub fn new(server: &str, port: u16) -> Result<Bot> {
         let (tx, rx) = channel();
 
@@ -30,15 +31,16 @@ impl<'a> Bot<'a> {
         let stream = BufStream::new(try!(TcpStream::connect((server, port))));
         let mut wstream = try!(stream.get_ref().try_clone());
 
-        let reader_thread = thread::scoped(move || {
+        let server = server.to_owned();
+        let reader_thread = thread::spawn(move || {
             for full_line in stream.lines() {
                 for line in full_line.unwrap().split("\r\n") {
-                    handle_line(server, &mut sockets, line, &tx);
+                    handle_line(&server[..], &mut sockets, line, &tx);
                 }
             }
         });
 
-        let writer_thread = thread::scoped(move || {
+        let writer_thread = thread::spawn(move || {
             wstream.write(b"NICK RustBot\r\n").unwrap();
             wstream.write(b"USER RustBot 0 * :RustBot\r\n").unwrap();
             while super::RUNNING.load(Ordering::SeqCst) {
@@ -51,8 +53,12 @@ impl<'a> Bot<'a> {
         });
 
         Ok(Bot {
-            threads: vec![reader_thread, writer_thread]
+            threads: (reader_thread, writer_thread)
         })
+    }
+    pub fn wait_for_exit(self) {
+        self.threads.0.join().unwrap();
+        self.threads.1.join().unwrap();
     }
 }
 

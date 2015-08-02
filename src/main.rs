@@ -1,10 +1,9 @@
-#![feature(scoped)]
-#![feature(buf_stream)]
 #[macro_use]
 
 extern crate nom;
 extern crate ctrlc;
 extern crate unix_socket;
+extern crate bufstream;
 
 mod bot;
 mod parser;
@@ -20,6 +19,7 @@ fn main() {
     CtrlC::set_handler(move || {
         RUNNING.store(false, Ordering::SeqCst);
     });
-    Bot::new("irc.quakenet.org", 6667).unwrap();
+    let bot = Bot::new("irc.quakenet.org", 6667).unwrap();
     while RUNNING.load(Ordering::SeqCst) {}
+    bot.wait_for_exit();
 }
