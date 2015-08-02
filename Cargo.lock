@@ -5,7 +5,7 @@ dependencies = [
  "bufstream 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "ctrlc 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "nom 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "unix_socket 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "unix_socket 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -44,7 +44,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "unix_socket"
-version = "0.3.2"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "debug-builders 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",

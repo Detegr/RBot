@@ -6,6 +6,6 @@ authors = ["Antti Keränen <detegr@gmail.com>"]
 
 [dependencies]
 nom = "*"
-unix_socket = "0.3.2"
+unix_socket = "^0.4"
 ctrlc = "*"
 bufstream = "*"
