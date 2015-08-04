@@ -62,7 +62,6 @@ impl Bot {
                 for plugin in plugins.lock().unwrap().iter_mut() {
                     match plugin.read_line(&mut line) {
                         Ok(_) => {
-                            println!("Got line: {}", line);
                             for line in line.lines() {
                                 println!("Sending: {}", line);
                                 let _ = tx.send(line.to_owned());
