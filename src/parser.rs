@@ -43,6 +43,21 @@ pub struct Message<'a> {
     pub command: Command<'a>,
     pub params: Vec<&'a str>
 }
+impl<'a> Message<'a> {
+    pub fn to_whitespace_separated(&self) -> String {
+        // TODO: I don't think this ret.push_str() stuff is ideal
+        let mut ret = String::new();
+        ret.push_str(&self.command.to_string()[..]);
+        ret.push_str(&" ");
+        match self.prefix {
+            Some(ref prefix) => ret.push_str(&prefix.to_string()[..]),
+            None => {}
+        };
+        ret.push_str(&" ");
+        ret.push_str(&self.params[..].join(" ")[..]);
+        ret
+    }
+}
 
 impl<'a> fmt::Display for Message<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -70,11 +85,9 @@ named!(message_parser <&[u8], Message>,
             let params = match parsed_params {
                 Some(p) => {
                     let _: &str = p; // TODO: This looks stupid. How should this be done?
-                    let words = p.split_whitespace();
-                    // TODO: Is it possible to remove the mutable variable?
-                    let mut prms: Vec<&str> = words.collect();
-                    prms.push(parsed_trailing);
-                    prms
+                    p.split_whitespace()
+                        .chain(::std::iter::repeat(parsed_trailing).take(1))
+                        .collect()
                 },
                 None => parsed_trailing.split_whitespace().collect()
             };
@@ -193,5 +206,10 @@ mod tests {
                 Err(_) => panic!("Could not parse line {:?} from message.", m)
             };
         }
+    }
+    #[test]
+    fn test_whitespace_separated() {
+        let parsed = parse_message(":user!host@example.com PRIVMSG #channel :message\r\n").unwrap();
+        assert_eq!(parsed.to_whitespace_separated(), "PRIVMSG user!host@example.com #channel message");
     }
 }

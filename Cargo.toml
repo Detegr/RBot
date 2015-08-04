@@ -9,3 +9,6 @@ nom = "*"
 unix_socket = "^0.4"
 ctrlc = "*"
 bufstream = "*"
+
+[features]
+default = ["unix_socket/socket_timeout"]

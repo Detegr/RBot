@@ -1,6 +1,5 @@
 use std::net::{TcpStream};
-use bufstream::BufStream;
-use std::io::{BufRead,Write};
+use std::io::{BufRead,BufReader,Write};
 use std::io::Result;
 use std::thread;
 use std::sync::mpsc::{channel, Sender};
@@ -11,31 +10,30 @@ use std::thread::JoinHandle;
 use std::net::Shutdown;
 use unix_socket::{UnixStream,UnixListener};
 use std::sync::{Arc,Mutex};
-use std::collections::HashMap;
 use std::fs::{create_dir,remove_file};
 
 const SOCKETDIR: &'static str = "./sockets";
-const CHANNELS: &'static [&'static str] = &["#testchannel"]; // TODO: Read channels (and servers) from a config file
+type Plugins = Mutex<Vec<BufReader<UnixStream>>>;
 
 pub struct Bot {
-    threads: (JoinHandle<()>, JoinHandle<()>),
+    threads: (JoinHandle<()>, JoinHandle<()>, JoinHandle<()>),
 }
 impl Bot {
     pub fn new(server: &str, port: u16) -> Result<Bot> {
         let (tx, rx) = channel();
 
-        let mut sockets = HashMap::new();
-        sockets.insert(server.to_owned(), listen_to_unix_socket(server));
+        let plugins = listen_to_unix_socket(server);
         println!("Connecting to {}:{}", server, port);
 
-        let stream = BufStream::new(try!(TcpStream::connect((server, port))));
+        let stream = BufReader::new(try!(TcpStream::connect((server, port))));
         let mut wstream = try!(stream.get_ref().try_clone());
 
-        let server = server.to_owned();
+        let rplugins = plugins.clone();
+        let rtx = tx.clone();
         let reader_thread = thread::spawn(move || {
             for full_line in stream.lines() {
                 for line in full_line.unwrap().split("\r\n") {
-                    handle_line(&server[..], &mut sockets, line, &tx);
+                    handle_line(&rplugins, line, &rtx);
                 }
             }
         });
@@ -45,60 +43,72 @@ impl Bot {
             wstream.write(b"USER RustBot 0 * :RustBot\r\n").unwrap();
             while super::RUNNING.load(Ordering::SeqCst) {
                 match rx.try_recv() {
-                    Ok(line) => {wstream.write(line.as_bytes()).unwrap();}
-                    Err(_) => {thread::sleep_ms(500);}
+                    Ok(line) => {
+                        wstream.write(line.as_bytes()).unwrap();
+                        wstream.write(b"\r\n").unwrap();
+                    }
+                    Err(_) => {
+                        thread::sleep_ms(500);
+                    }
                 };
             }
             wstream.shutdown(Shutdown::Both).unwrap();
         });
 
+        let plugin_thread = thread::spawn(move || {
+            let mut line = String::new();
+            let plugins = plugins.clone();
+            while super::RUNNING.load(Ordering::SeqCst) {
+                for plugin in plugins.lock().unwrap().iter_mut() {
+                    match plugin.read_line(&mut line) {
+                        Ok(_) => {
+                            println!("Got line: {}", line);
+                            for line in line.lines() {
+                                println!("Sending: {}", line);
+                                let _ = tx.send(line.to_owned());
+                            }
+                        },
+                        Err(_) => {
+                            continue;
+                        }
+                    }
+                }
+                thread::sleep_ms(250);
+            }
+        });
+
         Ok(Bot {
-            threads: (reader_thread, writer_thread)
+            threads: (reader_thread, writer_thread, plugin_thread)
         })
     }
     pub fn wait_for_exit(self) {
         self.threads.0.join().unwrap();
         self.threads.1.join().unwrap();
+        self.threads.2.join().unwrap();
     }
 }
 
-fn handle_line(server: &str, sockets: &mut HashMap<String, Arc<Mutex<Vec<UnixStream>>>>, line: &str, tx: &Sender<String>) {
+fn handle_line(plugins: &Arc<Plugins>, line: &str, tx: &Sender<String>) {
     let mut parsed = parser::parse_message(line.as_ref()).unwrap();
     {
-        let mut clients = sockets.get(server).unwrap().lock().unwrap();
-        for mut client in &mut *clients {
-            client.write(line.as_bytes()).unwrap();
+        for plugin in plugins.lock().unwrap().iter_mut() {
+            let p = plugin.get_mut();
+            match p.write(parsed.to_whitespace_separated().as_bytes())
+                .and_then(|_| p.write(b"\r\n"))
+                .and_then(|_| p.flush()) {
+                Err(e) => println!("{}", e.to_string()),
+                _ => {},
+            }
         }
     }
-    println!("{}", line);
-    println!("{:?}", parsed);
-    match parsed.command {
-        Command::Named("PING") => {
-            parsed.command = Command::Named("PONG");
-            tx.send(format!("{}\r\n", parsed)).unwrap();
-        },
-        Command::Named("PRIVMSG") => {
-            let destination = parsed.params[0];
-            let key = destination.to_owned();
-            println!("Retreiving value for '{}'", key);
-            let socketdata = sockets.entry(key).or_insert_with(|| listen_to_unix_socket(destination));
-            {
-                let mut socket = socketdata.lock().unwrap();
-                for mut client in &mut *socket {
-                    client.write(line.as_bytes()).unwrap();
-                }
-            }
-        },
-        Command::Numeric(376) => { // End of MOTD
-            for channel in CHANNELS {
-                tx.send(format!("JOIN {}\r\n", channel)).unwrap();
-            }
-        },
-        _ => {}
+    if parsed.command == Command::Named("PING") {
+        parsed.command = Command::Named("PONG");
+        let _ = tx.send(parsed.to_string());
     }
+    println!("{:?}", parsed);
 }
 
-fn listen_to_unix_socket(socket: &str) -> Arc<Mutex<Vec<UnixStream>>> {
+fn listen_to_unix_socket(socket: &str) -> Arc<Plugins> {
     let _ = create_dir(SOCKETDIR);
     let clientdata = Arc::new(Mutex::new(vec![]));
     let socketpath = format!("{}/{}", SOCKETDIR, socket);
@@ -107,14 +117,17 @@ fn listen_to_unix_socket(socket: &str) -> Arc<Mutex<Vec<UnixStream>>> {
     let ret = clientdata.clone();
     thread::spawn(move || {
         let ulistener = match UnixListener::bind(&socketpath) {
-            Ok(ulistener) => ulistener,
+            Ok(ulistener) => {
+                ulistener
+            },
             Err(err) => panic!("Could not create UNIX socket to '{}': {}", socketpath, err)
         };
         for stream in ulistener.incoming() {
             match stream {
                 Ok(client) => {
+                    client.set_read_timeout(Some(::std::time::Duration::from_millis(100))).unwrap();
                     let mut clients = clientdata.lock().unwrap();
-                    clients.push(client);
+                    clients.push(BufReader::new(client));
                 }
                 Err(err) => println!("New client failed, error: {}", err)
             }
