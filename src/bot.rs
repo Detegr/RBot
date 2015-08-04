@@ -66,6 +66,7 @@ impl Bot {
                                 println!("Sending: {}", line);
                                 let _ = tx.send(line.to_owned());
                             }
+                            line.clear();
                         },
                         Err(_) => {
                             continue;
