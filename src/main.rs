@@ -1,12 +1,10 @@
 #![feature(duration)]
-#[macro_use]
 
-extern crate nom;
+extern crate rbot_parser as parser;
 extern crate ctrlc;
 extern crate unix_socket;
 
 mod bot;
-mod parser;
 
 use bot::Bot;
 use ctrlc::CtrlC;

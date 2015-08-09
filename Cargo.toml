@@ -4,8 +4,10 @@ name = "rbot"
 version = "0.0.1"
 authors = ["Antti Keränen <detegr@gmail.com>"]
 
+[dependencies.rbot_parser]
+path = "parser"
+
 [dependencies]
-nom = "*"
 unix_socket = "^0.4"
 ctrlc = "*"
 bufstream = "*"
