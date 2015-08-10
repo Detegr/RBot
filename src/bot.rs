@@ -89,7 +89,13 @@ impl Bot {
 }
 
 fn handle_line(plugins: &Arc<Plugins>, line: &str, tx: &Sender<String>) {
-    let mut parsed = parser::parse_message(line.as_ref()).unwrap();
+    let mut parsed = match parser::parse_message(line.as_ref()) {
+        Ok(line) => line,
+        Err(e) => {
+            println!("{}", e.to_string());
+            return;
+        }
+    };
     {
         for plugin in plugins.lock().unwrap().iter_mut() {
             let p = plugin.get_mut();
