@@ -101,8 +101,8 @@ fn handle_line(plugins: &Arc<Plugins>, line: &str, tx: &Sender<String>) {
             }
         }
     }
-    if parsed.command == Command::Named("PING") {
-        parsed.command = Command::Named("PONG");
+    if parsed.command == Command::Named("PING".into()) {
+        parsed.command = Command::Named("PONG".into());
         let _ = tx.send(parsed.to_string());
     }
     println!("{:?}", parsed);
