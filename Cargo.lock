@@ -4,7 +4,7 @@ version = "0.0.1"
 dependencies = [
  "bufstream 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "ctrlc 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
- "rbot_parser 0.1.0",
+ "rbot_parser 0.1.0 (git+https://github.com/Detegr/RBot-parser.git)",
  "unix_socket 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -45,6 +45,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "rbot_parser"
 version = "0.1.0"
+source = "git+https://github.com/Detegr/RBot-parser.git#75b7687c1e8bd5226c7f3b2926fa65fce08273a6"
 dependencies = [
  "nom 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]

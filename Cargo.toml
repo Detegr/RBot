@@ -5,7 +5,7 @@ version = "0.0.1"
 authors = ["Antti Keränen <detegr@gmail.com>"]
 
 [dependencies.rbot_parser]
-path = "parser"
+git = "https://github.com/Detegr/RBot-parser.git"
 
 [dependencies]
 unix_socket = "^0.4"
