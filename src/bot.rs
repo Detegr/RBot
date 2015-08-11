@@ -32,8 +32,13 @@ impl Bot {
         let rtx = tx.clone();
         let reader_thread = thread::spawn(move || {
             for full_line in stream.lines() {
-                for line in full_line.unwrap().split("\r\n") {
-                    handle_line(&rplugins, line, &rtx);
+                match full_line {
+                    Ok(full_line) => {
+                        for line in full_line.split("\r\n") {
+                            handle_line(&rplugins, line, &rtx);
+                        }
+                    }
+                    Err(e) => println!("{}", e)
                 }
             }
         });
@@ -92,7 +97,7 @@ fn handle_line(plugins: &Arc<Plugins>, line: &str, tx: &Sender<String>) {
     let mut parsed = match parser::parse_message(line.as_ref()) {
         Ok(line) => line,
         Err(e) => {
-            println!("{}", e.to_string());
+            println!("{}", e);
             return;
         }
     };
