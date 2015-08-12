@@ -13,23 +13,29 @@ use std::sync::{Arc,Mutex};
 use std::fs::{create_dir,remove_file};
 
 const SOCKETDIR: &'static str = "./sockets";
-type Plugins = Mutex<Vec<BufReader<UnixStream>>>;
+type PluginConnections = Mutex<Vec<BufReader<UnixStream>>>;
 
+/// Represents connection to one IRC server
 pub struct Bot {
     threads: (JoinHandle<()>, JoinHandle<()>, JoinHandle<()>),
 }
 impl Bot {
+    /// Creates a new connection to
+    /// specified server and port.
     pub fn new(server: &str, port: u16) -> Result<Bot> {
         let (tx, rx) = channel();
 
-        let plugins = listen_to_unix_socket(server);
+        let plugin_connections = listen_to_unix_socket(server);
         println!("Connecting to {}:{}", server, port);
 
         let stream = BufReader::new(try!(TcpStream::connect((server, port))));
         let mut wstream = try!(stream.get_ref().try_clone());
 
-        let rplugins = plugins.clone();
+        let rplugins = plugin_connections.clone();
         let rtx = tx.clone();
+
+        // Reader thread will read the TCP socket and
+        // call handling of all lines without newlines
         let reader_thread = thread::spawn(move || {
             for full_line in stream.lines() {
                 match full_line {
@@ -43,6 +49,9 @@ impl Bot {
             }
         });
 
+        // Writer thread will first write the initial lines needed
+        // for a connection. Then it will start listening the
+        // receiver end of a channel, waiting for input from reader_thread
         let writer_thread = thread::spawn(move || {
             wstream.write(b"NICK RustBot\r\n").unwrap();
             wstream.write(b"USER RustBot 0 * :RustBot\r\n").unwrap();
@@ -60,12 +69,15 @@ impl Bot {
             wstream.shutdown(Shutdown::Both).unwrap();
         });
 
+        // Plugin thread will listen to an unix socket for possible
+        // commands from plugins. Currently the plugins should return
+        // strings that are valid commands for IRC
         let plugin_thread = thread::spawn(move || {
             let mut line = String::new();
-            let plugins = plugins.clone();
+            let plugin_connections = plugin_connections.clone();
             while super::RUNNING.load(Ordering::SeqCst) {
-                for plugin in plugins.lock().unwrap().iter_mut() {
-                    match plugin.read_line(&mut line) {
+                for plugin_client in plugin_connections.lock().unwrap().iter_mut() {
+                    match plugin_client.read_line(&mut line) {
                         Ok(_) => {
                             for line in line.lines() {
                                 println!("Sending: {}", line);
@@ -93,7 +105,12 @@ impl Bot {
     }
 }
 
-fn handle_line(plugins: &Arc<Plugins>, line: &str, tx: &Sender<String>) {
+/// Parses a line of text in IRC protocol format. The parsed line
+/// is then restructured in a simpler format and sent to the unix
+/// socket for possible plugin invocations. PING-PONG is handled here
+/// because it's necessary for the connection and thus does not belong
+/// in any particular plugin
+fn handle_line(plugins: &Arc<PluginConnections>, line: &str, tx: &Sender<String>) {
     let mut parsed = match parser::parse_message(line.as_ref()) {
         Ok(line) => line,
         Err(e) => {
@@ -119,12 +136,15 @@ fn handle_line(plugins: &Arc<Plugins>, line: &str, tx: &Sender<String>) {
     println!("{:?}", parsed);
 }
 
-fn listen_to_unix_socket(socket: &str) -> Arc<Plugins> {
+/// Opens up an unix socket and spawns a thread that will populate
+/// the vector with the connections to the socket. Will probably
+/// be renamed in the future
+fn listen_to_unix_socket(socket: &str) -> Arc<PluginConnections> {
     let _ = create_dir(SOCKETDIR);
     let clientdata = Arc::new(Mutex::new(vec![]));
     let socketpath = format!("{}/{}", SOCKETDIR, socket);
     let _ = remove_file(&socketpath);
-    println!("Creating status socket for '{}' to {}", socket, socketpath);
+    println!("Creating a socket for '{}' to {}", socket, socketpath);
     let ret = clientdata.clone();
     thread::spawn(move || {
         let ulistener = match UnixListener::bind(&socketpath) {
