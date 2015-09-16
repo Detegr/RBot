@@ -1,6 +1,3 @@
-#![feature(duration)]
-
-extern crate rbot_parser as parser;
 extern crate ctrlc;
 extern crate unix_socket;
 

@@ -3,8 +3,6 @@ use std::io::{BufRead,BufReader,Write};
 use std::io::Result;
 use std::thread;
 use std::sync::mpsc::{channel, Sender};
-use parser;
-use parser::Command;
 use std::sync::atomic::Ordering;
 use std::thread::JoinHandle;
 use std::net::Shutdown;
@@ -111,29 +109,27 @@ impl Bot {
 /// because it's necessary for the connection and thus does not belong
 /// in any particular plugin
 fn handle_line(plugins: &Arc<PluginConnections>, line: &str, tx: &Sender<String>) {
-    let mut parsed = match parser::parse_message(line.as_ref()) {
-        Ok(line) => line,
-        Err(e) => {
-            println!("{}", e);
-            return;
-        }
-    };
-    {
-        for plugin in plugins.lock().unwrap().iter_mut() {
-            let p = plugin.get_mut();
-            match p.write(parsed.to_whitespace_separated().as_bytes())
-                .and_then(|_| p.write(b"\r\n"))
-                .and_then(|_| p.flush()) {
-                Err(e) => println!("{}", e.to_string()),
-                _ => {},
-            }
+    for plugin in plugins.lock().unwrap().iter_mut() {
+        let p = plugin.get_mut();
+        match p.write(line.as_bytes())
+            .and_then(|_| p.write(b"\r\n"))
+            .and_then(|_| p.flush()) {
+            Err(e) => println!("{}", e.to_string()),
+            _ => {},
         }
     }
-    if parsed.command == Command::Named("PING".into()) {
-        parsed.command = Command::Named("PONG".into());
-        let _ = tx.send(parsed.to_string());
+    println!("{}", line);
+    if let Some(pong) = handle_pingpong(line) {
+        println!("{}", pong);
+        tx.send(pong).unwrap();
     }
-    println!("{:?}", parsed);
+}
+
+fn handle_pingpong(line: &str) -> Option<String> {
+    match line.starts_with("PING") {
+        true => Some(line.replace("PING", "PONG").to_owned()),
+        false => None
+    }
 }
 
 /// Opens up an unix socket and spawns a thread that will populate
