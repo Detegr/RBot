@@ -1,48 +1,125 @@
-use std::net::{TcpStream};
-use std::io::{BufRead,BufReader,Write};
-use std::io::Result;
-use std::thread;
-use std::sync::mpsc::{channel, Sender};
-use std::sync::atomic::Ordering;
-use std::thread::JoinHandle;
+use ::timer::Timer;
+use ::timer;
+use std::fs::{create_dir, remove_file};
+use std::io::{Result, BufRead, BufReader, Write};
+use std::mem;
 use std::net::Shutdown;
-use unix_socket::{UnixStream,UnixListener};
-use std::sync::{Arc,Mutex};
-use std::fs::{create_dir,remove_file};
+use std::net::TcpStream;
+use std::sync::atomic::Ordering;
+use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::thread;
+use time::Duration;
+use unix_socket::{UnixStream, UnixListener};
 
 const SOCKETDIR: &'static str = "./sockets";
 type PluginConnections = Mutex<Vec<BufReader<UnixStream>>>;
 
-/// Represents connection to one IRC server
+/// Represents a connection to one IRC server
 pub struct Bot {
-    threads: (JoinHandle<()>, JoinHandle<()>, JoinHandle<()>),
+    threads: Vec<JoinHandle<()>>,
 }
 impl Bot {
     /// Creates a new connection to
     /// specified server and port.
-    pub fn new(server: &str, port: u16) -> Result<Bot> {
-        let (tx, rx) = channel();
+    pub fn new<S: Into<String>>(server: S, port: u16) -> Result<Bot> {
+        let server = server.into();
+        let (plugin_tx, plugin_rx) = channel();
+        let plugin_rx = Arc::new(Mutex::new(plugin_rx));
 
-        let plugin_connections = listen_to_unix_socket(server);
+        let plugin_connections = listen_to_unix_socket(&server[..]);
+
+
         println!("Connecting to {}:{}", server, port);
 
-        let stream = BufReader::new(try!(TcpStream::connect((server, port))));
-        let mut wstream = try!(stream.get_ref().try_clone());
+        let ptx = plugin_tx.clone();
+        let pluginconns = plugin_connections.clone();
+        let reconnect_thread = thread::spawn(move || {
+            let (connection_dead_tx, connection_dead_rx) = channel();
+            if let Err(e) = Bot::connect(&server[..],
+                                         port,
+                                         ptx.clone(),
+                                         plugin_rx.clone(),
+                                         pluginconns.clone(),
+                                         connection_dead_tx.clone()) {
+                println!("{}", e);
+                ::std::process::exit(1);
+            }
+            while super::RUNNING.load(Ordering::SeqCst) {
+                match connection_dead_rx.try_recv() {
+                    Ok(_) => {
+                        Bot::connect(&server[..],
+                                     port,
+                                     ptx.clone(),
+                                     plugin_rx.clone(),
+                                     pluginconns.clone(),
+                                     connection_dead_tx.clone());
+                    }
+                    Err(_) => {
+                        thread::sleep_ms(10000);
+                    }
+                }
+            }
+        });
 
-        let rplugins = plugin_connections.clone();
-        let rtx = tx.clone();
+        // Plugin thread will listen to an unix socket for possible
+        // commands from plugins. Currently the plugins should return
+        // strings that are valid commands for IRC
+        let plugin_thread = thread::spawn(move || {
+            let mut line = String::new();
+            while super::RUNNING.load(Ordering::SeqCst) {
+                for plugin_client in plugin_connections.lock().unwrap().iter_mut() {
+                    match plugin_client.read_line(&mut line) {
+                        Ok(_) => {
+                            for line in line.lines() {
+                                println!("Sending: {}", line);
+                                let _ = plugin_tx.send(line.to_owned());
+                            }
+                            line.clear();
+                        }
+                        Err(_) => {
+                            continue;
+                        }
+                    }
+                }
+                thread::sleep_ms(250);
+            }
+        });
+
+        Ok(Bot { threads: vec![reconnect_thread, plugin_thread] })
+    }
+
+    fn connect(server: &str,
+               port: u16,
+               plugin_tx: Sender<String>,
+               plugin_rx: Arc<Mutex<Receiver<String>>>,
+               plugin_connections: Arc<PluginConnections>,
+               connection_dead_tx: Sender<()>)
+               -> Result<(JoinHandle<()>, JoinHandle<()>)> {
+        let stream = BufReader::new(try!(TcpStream::connect((&server[..], port))));
+        let mut wstream = try!(stream.get_ref().try_clone());
 
         // Reader thread will read the TCP socket and
         // call handling of all lines without newlines
         let reader_thread = thread::spawn(move || {
+            let connection_alive_timer = Timer::new();
+            let mut guard = None;
             for full_line in stream.lines() {
                 match full_line {
                     Ok(full_line) => {
                         for line in full_line.split("\r\n") {
-                            handle_line(&rplugins, line, &rtx);
+                            handle_line(&plugin_connections, line, &plugin_tx);
+                            if let Some(pong) = handle_pingpong(line,
+                                                                &connection_alive_timer,
+                                                                connection_dead_tx.clone(),
+                                                                &mut guard) {
+                                println!("{}", pong);
+                                plugin_tx.send(pong).unwrap();
+                            }
                         }
                     }
-                    Err(e) => println!("{}", e)
+                    Err(e) => println!("{}", e),
                 }
             }
         });
@@ -54,7 +131,7 @@ impl Bot {
             wstream.write(b"NICK RustBot\r\n").unwrap();
             wstream.write(b"USER RustBot 0 * :RustBot\r\n").unwrap();
             while super::RUNNING.load(Ordering::SeqCst) {
-                match rx.try_recv() {
+                match plugin_rx.lock().unwrap().try_recv() {
                     Ok(line) => {
                         wstream.write(line.as_bytes()).unwrap();
                         wstream.write(b"\r\n").unwrap();
@@ -67,47 +144,19 @@ impl Bot {
             wstream.shutdown(Shutdown::Both).unwrap();
         });
 
-        // Plugin thread will listen to an unix socket for possible
-        // commands from plugins. Currently the plugins should return
-        // strings that are valid commands for IRC
-        let plugin_thread = thread::spawn(move || {
-            let mut line = String::new();
-            let plugin_connections = plugin_connections.clone();
-            while super::RUNNING.load(Ordering::SeqCst) {
-                for plugin_client in plugin_connections.lock().unwrap().iter_mut() {
-                    match plugin_client.read_line(&mut line) {
-                        Ok(_) => {
-                            for line in line.lines() {
-                                println!("Sending: {}", line);
-                                let _ = tx.send(line.to_owned());
-                            }
-                            line.clear();
-                        },
-                        Err(_) => {
-                            continue;
-                        }
-                    }
-                }
-                thread::sleep_ms(250);
-            }
-        });
-
-        Ok(Bot {
-            threads: (reader_thread, writer_thread, plugin_thread)
-        })
+        Ok((reader_thread, writer_thread))
     }
+
     pub fn wait_for_exit(self) {
-        self.threads.0.join().unwrap();
-        self.threads.1.join().unwrap();
-        self.threads.2.join().unwrap();
+        for thread in self.threads {
+            thread.join().unwrap();
+        }
     }
 }
 
 /// Parses a line of text in IRC protocol format. The parsed line
 /// is then restructured in a simpler format and sent to the unix
-/// socket for possible plugin invocations. PING-PONG is handled here
-/// because it's necessary for the connection and thus does not belong
-/// in any particular plugin
+/// socket for possible plugin invocations.
 fn handle_line(plugins: &Arc<PluginConnections>, line: &str, tx: &Sender<String>) {
     for plugin in plugins.lock().unwrap().iter_mut() {
         let p = plugin.get_mut();
@@ -115,20 +164,32 @@ fn handle_line(plugins: &Arc<PluginConnections>, line: &str, tx: &Sender<String>
             .and_then(|_| p.write(b"\r\n"))
             .and_then(|_| p.flush()) {
             Err(e) => println!("{}", e.to_string()),
-            _ => {},
+            _ => {}
         }
     }
     println!("{}", line);
-    if let Some(pong) = handle_pingpong(line) {
-        println!("{}", pong);
-        tx.send(pong).unwrap();
-    }
 }
 
-fn handle_pingpong(line: &str) -> Option<String> {
-    match line.starts_with("PING") {
-        true => Some(line.replace("PING", "PONG").to_owned()),
-        false => None
+/// Handles a pingpong line, replacing PING with PONG
+/// Resets a timer every time a PING is received to check if
+/// the connection is still alive.
+fn handle_pingpong(line: &str,
+                   connection_alive_timer: &Timer,
+                   connection_dead_tx: Sender<()>,
+                   guard: &mut Option<timer::Guard>)
+                   -> Option<String> {
+    if line.starts_with("PING") {
+        if guard.is_some() {
+            let g = guard.take();
+            // Drop g here and cancel the timer
+        }
+        mem::replace(guard,
+                     Some(connection_alive_timer.schedule_with_delay(Duration::minutes(1), move || {
+                             let _ = connection_dead_tx.send(());
+                         })));
+        Some(line.replace("PING", "PONG").to_owned())
+    } else {
+        None
     }
 }
 
@@ -144,10 +205,8 @@ fn listen_to_unix_socket(socket: &str) -> Arc<PluginConnections> {
     let ret = clientdata.clone();
     thread::spawn(move || {
         let ulistener = match UnixListener::bind(&socketpath) {
-            Ok(ulistener) => {
-                ulistener
-            },
-            Err(err) => panic!("Could not create UNIX socket to '{}': {}", socketpath, err)
+            Ok(ulistener) => ulistener,
+            Err(err) => panic!("Could not create UNIX socket to '{}': {}", socketpath, err),
         };
         for stream in ulistener.incoming() {
             match stream {
@@ -156,7 +215,7 @@ fn listen_to_unix_socket(socket: &str) -> Arc<PluginConnections> {
                     let mut clients = clientdata.lock().unwrap();
                     clients.push(BufReader::new(client));
                 }
-                Err(err) => println!("New client failed, error: {}", err)
+                Err(err) => println!("New client failed, error: {}", err),
             }
         }
     });

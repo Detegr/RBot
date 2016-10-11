@@ -1,13 +1,14 @@
 [package]
-
+authors = ["Antti Keränen <detegr@gmail.com>"]
 name = "rbot"
 version = "0.0.1"
-authors = ["Antti Keränen <detegr@gmail.com>"]
 
 [dependencies]
-unix_socket = "^0.4"
-ctrlc = "*"
 bufstream = "*"
+ctrlc = "*"
+time = "0.1.35"
+timer = "0.1.6"
+unix_socket = "^0.4"
 
 [features]
 default = ["unix_socket/socket_timeout"]
