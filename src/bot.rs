@@ -109,7 +109,7 @@ impl Bot {
                 match full_line {
                     Ok(full_line) => {
                         for line in full_line.split("\r\n") {
-                            handle_line(&plugin_connections, line, &plugin_tx);
+                            handle_line(&plugin_connections, line);
                             if let Some(pong) = handle_pingpong(line,
                                                                 &connection_alive_timer,
                                                                 connection_dead_tx.clone(),
@@ -157,7 +157,7 @@ impl Bot {
 /// Parses a line of text in IRC protocol format. The parsed line
 /// is then restructured in a simpler format and sent to the unix
 /// socket for possible plugin invocations.
-fn handle_line(plugins: &Arc<PluginConnections>, line: &str, tx: &Sender<String>) {
+fn handle_line(plugins: &Arc<PluginConnections>, line: &str) {
     for plugin in plugins.lock().unwrap().iter_mut() {
         let p = plugin.get_mut();
         match p.write(line.as_bytes())
@@ -181,10 +181,10 @@ fn handle_pingpong(line: &str,
     if line.starts_with("PING") {
         if guard.is_some() {
             let g = guard.take();
-            // Drop g here and cancel the timer
+            drop(g); //Drop g here and cancel the timer
         }
         mem::replace(guard,
-                     Some(connection_alive_timer.schedule_with_delay(Duration::minutes(1), move || {
+                     Some(connection_alive_timer.schedule_with_delay(Duration::minutes(5), move || {
                              let _ = connection_dead_tx.send(());
                          })));
         Some(line.replace("PING", "PONG").to_owned())
