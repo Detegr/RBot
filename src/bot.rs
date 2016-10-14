@@ -57,7 +57,7 @@ impl Bot {
                                      connection_dead_tx.clone());
                     }
                     Err(_) => {
-                        thread::sleep_ms(10000);
+                        thread::sleep(::std::time::Duration::from_secs(10));
                     }
                 }
             }
@@ -83,7 +83,7 @@ impl Bot {
                         }
                     }
                 }
-                thread::sleep_ms(250);
+                thread::sleep(::std::time::Duration::from_millis(250));
             }
         });
 
@@ -137,7 +137,7 @@ impl Bot {
                         wstream.write(b"\r\n").unwrap();
                     }
                     Err(_) => {
-                        thread::sleep_ms(500);
+                        thread::sleep(::std::time::Duration::from_millis(500));
                     }
                 };
             }
