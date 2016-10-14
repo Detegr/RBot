@@ -18,7 +18,7 @@ fn main() {
     });
     let bot = Bot::new("irc.quakenet.org", 6667).unwrap();
     while RUNNING.load(Ordering::SeqCst) {
-        thread::sleep_ms(100);
+        thread::sleep(std::time::Duration::from_millis(100));
     }
     bot.wait_for_exit();
 }
