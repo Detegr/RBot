@@ -16,6 +16,23 @@ use unix_socket::{UnixStream, UnixListener};
 const SOCKETDIR: &'static str = "./sockets";
 type PluginConnections = Mutex<Vec<BufReader<UnixStream>>>;
 
+#[derive(RustcDecodable, Debug)]
+pub struct Config {
+    pub port: u16,
+    pub nick: String,
+    pub server: String
+}
+
+impl Config {
+    pub fn new() -> Config {
+        Config {
+            port: 6667,
+            nick: "RustBot".to_string(),
+            server: "irc.quakenet.org".to_string(),
+        }
+    }
+}
+
 /// Represents a connection to one IRC server
 pub struct Bot {
     threads: Vec<JoinHandle<()>>,
@@ -23,22 +40,20 @@ pub struct Bot {
 impl Bot {
     /// Creates a new connection to
     /// specified server and port.
-    pub fn new<S: Into<String>>(server: S, port: u16) -> Result<Bot> {
-        let server = server.into();
+    pub fn new(config: Config) -> Result<Bot> {
         let (plugin_tx, plugin_rx) = channel();
         let plugin_rx = Arc::new(Mutex::new(plugin_rx));
 
-        let plugin_connections = listen_to_unix_socket(&server[..]);
+        let plugin_connections = listen_to_unix_socket(&config.server[..]);
 
 
-        println!("Connecting to {}:{}", server, port);
+        println!("Connecting to {}:{}", config.server, config.port);
 
         let ptx = plugin_tx.clone();
         let pluginconns = plugin_connections.clone();
         let reconnect_thread = thread::spawn(move || {
             let (connection_dead_tx, connection_dead_rx) = channel();
-            if let Err(e) = Bot::connect(&server[..],
-                                         port,
+            if let Err(e) = Bot::connect(&config,
                                          ptx.clone(),
                                          plugin_rx.clone(),
                                          pluginconns.clone(),
@@ -49,8 +64,7 @@ impl Bot {
             while super::RUNNING.load(Ordering::SeqCst) {
                 match connection_dead_rx.try_recv() {
                     Ok(_) => {
-                        Bot::connect(&server[..],
-                                     port,
+                        Bot::connect(&config,
                                      ptx.clone(),
                                      plugin_rx.clone(),
                                      pluginconns.clone(),
@@ -90,15 +104,16 @@ impl Bot {
         Ok(Bot { threads: vec![reconnect_thread, plugin_thread] })
     }
 
-    fn connect(server: &str,
-               port: u16,
+    fn connect(config: &Config,
                plugin_tx: Sender<String>,
                plugin_rx: Arc<Mutex<Receiver<String>>>,
                plugin_connections: Arc<PluginConnections>,
                connection_dead_tx: Sender<()>)
                -> Result<(JoinHandle<()>, JoinHandle<()>)> {
-        let stream = BufReader::new(try!(TcpStream::connect((&server[..], port))));
+        let stream = BufReader::new(try!(TcpStream::connect((&config.server[..], config.port))));
         let mut wstream = try!(stream.get_ref().try_clone());
+        wstream.write(format!("NICK {}\r\n", config.nick).as_bytes()).unwrap();
+        wstream.write(format!("USER {} 0 * :{}\r\n", config.nick, config.nick).as_bytes()).unwrap();
 
         // Reader thread will read the TCP socket and
         // call handling of all lines without newlines
@@ -128,8 +143,6 @@ impl Bot {
         // for a connection. Then it will start listening the
         // receiver end of a channel, waiting for input from reader_thread
         let writer_thread = thread::spawn(move || {
-            wstream.write(b"NICK RustBot\r\n").unwrap();
-            wstream.write(b"USER RustBot 0 * :RustBot\r\n").unwrap();
             while super::RUNNING.load(Ordering::SeqCst) {
                 match plugin_rx.lock().unwrap().try_recv() {
                     Ok(line) => {
