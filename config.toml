@@ -1,0 +1,3 @@
+server="irc.quakenet.org"
+port=6667
+nick="RustBot"
