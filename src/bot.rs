@@ -20,7 +20,7 @@ pub fn run(config: Config) {
     crossbeam::scope(|scope| {
         let (plugin_tx, plugin_rx) = channel();
         let plugin_rx = Arc::new(Mutex::new(plugin_rx));
-        let plugin_connections = listen_to_unix_socket(scope, &config.server);
+        let plugin_connections = listen_to_unix_socket(&config.server);
 
         println!("Connecting to {}:{}", config.server, config.port);
 
@@ -110,7 +110,7 @@ fn connect(config: &Config,
                     }
                 };
             }
-            wstream.shutdown(Shutdown::Both);
+            wstream.shutdown(Shutdown::Both).unwrap();
         });
 
         Ok((reader_thread, writer_thread))
@@ -147,7 +147,7 @@ fn handle_pingpong(line: &str) -> Option<String> {
 /// Opens up an unix socket and spawns a thread that will populate
 /// the vector with the connections to the socket. Will probably
 /// be renamed in the future
-fn listen_to_unix_socket(scope: &crossbeam::Scope, socket: &str) -> Arc<PluginConnections> {
+fn listen_to_unix_socket(socket: &str) -> Arc<PluginConnections> {
     let _ = create_dir(SOCKETDIR);
     let clientdata = Arc::new(Mutex::new(vec![]));
     let socketpath = format!("{}/{}", SOCKETDIR, socket);

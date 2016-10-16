@@ -1,4 +1,3 @@
-use ::bot;
 use ::toml;
 use std::default::Default;
 use std::fs::File;

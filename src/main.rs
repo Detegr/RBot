@@ -9,8 +9,6 @@ mod config;
 mod bot;
 
 use std::sync::atomic::{ATOMIC_BOOL_INIT, AtomicBool, Ordering};
-use std::thread;
-use std::time::Duration;
 
 static RUNNING: AtomicBool = ATOMIC_BOOL_INIT;
 
