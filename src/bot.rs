@@ -1,7 +1,7 @@
 use ::config::Config;
 use ::crossbeam;
 use std::fs::{create_dir, remove_file};
-use std::io::{Result, BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::net::Shutdown;
 use std::net::TcpStream;
 use std::sync::atomic::Ordering;
@@ -29,7 +29,8 @@ pub fn run(config: Config) {
 
         scope.spawn(move || {
             while super::RUNNING.load(Ordering::SeqCst) {
-                let _ = connect(&config, ptx.clone(), plugin_rx.clone(), pluginconns.clone());
+                connect(&config, ptx.clone(), plugin_rx.clone(), pluginconns.clone());
+                println!("Reconnecting...");
                 thread::sleep(Duration::from_secs(5));
             }
         });
@@ -63,16 +64,15 @@ pub fn run(config: Config) {
 fn connect(config: &Config,
            plugin_tx: Sender<String>,
            plugin_rx: Arc<Mutex<Receiver<String>>>,
-           plugin_connections: Arc<PluginConnections>)
-           -> Result<(crossbeam::ScopedJoinHandle<()>, crossbeam::ScopedJoinHandle<()>)> {
-
-    let stream = BufReader::new(try!(TcpStream::connect((&config.server[..], config.port))));
-    let mut wstream = try!(stream.get_ref().try_clone());
+           plugin_connections: Arc<PluginConnections>) {
 
     crossbeam::scope(|scope| {
+        let stream = BufReader::new(TcpStream::connect((&config.server[..], config.port)).unwrap());
+        let mut wstream = stream.get_ref().try_clone().unwrap();
+
         // Reader thread will read the TCP socket and
         // call handling of all lines without newlines
-        let reader_thread = scope.spawn(move || {
+        scope.spawn(move || {
             for full_line in stream.lines() {
                 match full_line {
                     Ok(full_line) => {
@@ -92,7 +92,7 @@ fn connect(config: &Config,
         // Writer thread will first write the initial lines needed
         // for a connection. Then it will start listening the
         // receiver end of a channel, waiting for input from reader_thread
-        let writer_thread = scope.spawn(move || {
+        scope.spawn(move || {
             wstream.write(&format!("NICK {}\r\n", config.nick).as_bytes()).unwrap();
             wstream.write(&format!("USER {} 0 * :{}\r\n", config.nick, config.nick).as_bytes())
                 .unwrap();
@@ -104,17 +104,19 @@ fn connect(config: &Config,
                     }
                     Err(_) => {
                         thread::sleep(Duration::from_millis(500));
-                        if let Ok(_) = wstream.take_error() {
-                            break;
+                        match wstream.take_error() {
+                            Ok(None) => {},
+                            err => {
+                                println!("{:?}", err);
+                                break;
+                            }
                         }
                     }
                 };
             }
             wstream.shutdown(Shutdown::Both).unwrap();
         });
-
-        Ok((reader_thread, writer_thread))
-    })
+    });
 }
 
 /// Parses a line of text in IRC protocol format. The parsed line
