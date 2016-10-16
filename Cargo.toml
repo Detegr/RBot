@@ -5,6 +5,7 @@ version = "0.0.1"
 
 [dependencies]
 bufstream = "*"
+crossbeam = "0.2.10"
 ctrlc = "*"
 time = "0.1.35"
 timer = "0.1.6"
